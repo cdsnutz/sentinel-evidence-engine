@@ -1,0 +1,82 @@
+{
+  "name": "ProbeRun",
+  "type": "object",
+  "properties": {
+    "probe_id": {
+      "type": "string"
+    },
+    "control_id": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "object"
+    },
+    "http_status": {
+      "type": "number"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "live",
+        "fixture"
+      ]
+    },
+    "token_source": {
+      "type": "string",
+      "enum": [
+        "platform_secret",
+        "caller",
+        "none"
+      ]
+    },
+    "duration_ms": {
+      "type": "number"
+    },
+    "ran_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "probe_id",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

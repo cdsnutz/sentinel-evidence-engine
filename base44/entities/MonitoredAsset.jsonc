@@ -1,0 +1,67 @@
+{
+  "name": "MonitoredAsset",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "github",
+        "railway"
+      ]
+    },
+    "active": {
+      "type": "boolean",
+      "default": true
+    },
+    "owner": {
+      "type": "string"
+    },
+    "repo": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "environment_id": {
+      "type": "string"
+    },
+    "service_id": {
+      "type": "string"
+    },
+    "settings": {
+      "type": "object",
+      "description": "Declared service settings snapshot used when the provider API does not expose backups"
+    }
+  },
+  "required": [
+    "provider"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

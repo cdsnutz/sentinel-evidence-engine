@@ -1,0 +1,80 @@
+{
+  "name": "ControlMap",
+  "type": "object",
+  "properties": {
+    "control_id": {
+      "type": "string",
+      "description": "SOC2 Trust Services criterion, e.g. SOC2-CC8.1"
+    },
+    "probe_id": {
+      "type": "string",
+      "description": "Identifier of the probe that produces the evidence"
+    },
+    "requirement": {
+      "type": "string",
+      "description": "Plain-language control requirement"
+    },
+    "target": {
+      "type": "string",
+      "description": "Monitored asset the evidence was collected from"
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "github",
+        "railway"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "PENDING"
+      ]
+    },
+    "evidence_mode": {
+      "type": "string",
+      "enum": [
+        "live",
+        "fixture"
+      ],
+      "description": "live = read from the provider API; fixture = pure-function proof"
+    },
+    "evidence_summary": {
+      "type": "string"
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "control_id",
+    "probe_id",
+    "requirement",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
