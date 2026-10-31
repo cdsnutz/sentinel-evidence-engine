@@ -31,7 +31,11 @@ async function ghGet(token, path) {
 export async function probeGitHubBranchProtection(token, owner, repo, branch = 'main') {
   const target = `${owner}/${repo}@${branch}`;
   try {
-    const res = await ghGet(token, `/repos/${owner}/${repo}/branches/${branch}`);
+    const path = `/repos/${owner}/${repo}/branches/${branch}`;
+    let res = await ghGet(token, path);
+    // Branch protection is public data: a rejected token must not blind the probe.
+    const authFallback = Boolean(token) && res.status === 401;
+    if (authFallback) res = await ghGet(null, path);
     if (!res.ok) {
       return buildResult(
         'github_branch_protection',
@@ -52,6 +56,7 @@ export async function probeGitHubBranchProtection(token, owner, repo, branch = '
         branch: res.body?.name ?? branch,
         protected: res.body?.protected ?? false,
         head_sha: res.body?.commit?.sha ?? null,
+        auth_fallback: authFallback,
       },
       res.status,
     );

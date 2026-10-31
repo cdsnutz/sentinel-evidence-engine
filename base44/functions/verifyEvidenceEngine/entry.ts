@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.54';
 import { probeGitHubBranchProtection, probeGitHubRequiredSignatures, probeGitHubAdminAccessReview } from '../../shared/probes/github.ts';
 import { probeRailwayBackups, probeRailwayEnvLeakage, probeRailwayDeploymentTraceability } from '../../shared/probes/railway.ts';
-import { loadSecurityTags, readRows } from '../../shared/engine.ts';
+import { loadSecurityTags, readRows, loadRailwayTargets, loadGithubTargets, runRailwayProbes, runGithubProbes } from '../../shared/engine.ts';
 import { resolveToken } from '../../shared/vault.ts';
 import { persistResults } from '../../shared/evidence.ts';
 
@@ -110,6 +110,42 @@ export default async function (req) {
     ];
     const failureProven = failureChecks.every((check) => check.status === 'FAIL');
 
+    // ---------- CONFIGURED MONITORED ASSETS (real targets) ----------
+    const configuredAssets = [];
+    const railwayTargets = await loadRailwayTargets(base44);
+    for (const target of railwayTargets) {
+      const run = await runRailwayProbes(base44, target, { mode: 'live' });
+      configuredAssets.push({
+        provider: 'railway',
+        target: run.target,
+        token_source: run.token_source,
+        connection_errors: run.errors,
+        results: run.results.map((result) => ({
+          probe_id: result.probe_id,
+          status: result.status,
+          reason: result.reason,
+        })),
+      });
+      if (run.errors?.some((err) => /not authorized|401|unauthor/i.test(err))) {
+        notes.push(`Railway credential rejected for ${run.target}: ${run.errors[0]}`);
+      }
+    }
+    const githubTargets = await loadGithubTargets(base44);
+    for (const target of githubTargets) {
+      const run = await runGithubProbes(base44, target, { mode: 'live' });
+      configuredAssets.push({
+        provider: 'github',
+        target: run.target,
+        token_source: run.token_source,
+        connection_errors: [],
+        results: run.results.map((result) => ({
+          probe_id: result.probe_id,
+          status: result.status,
+          reason: result.reason,
+        })),
+      });
+    }
+
     // ---------- 3. DATABASE STATE ----------
     const controlRows = readRows(
       await base44.asServiceRole.entities.ControlMap.list({ sort: 'control_id', limit: 200 }),
@@ -198,6 +234,7 @@ export default async function (req) {
       },
       logic_suite: logicSuite,
       notes,
+      configured_assets: configuredAssets,
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

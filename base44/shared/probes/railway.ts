@@ -196,11 +196,20 @@ async function railwayQuery(token, query, variables) {
   return { status: response.status, body };
 }
 
-const VARIABLES_QUERY = `query ProbeVariables($projectId: String!, $environmentId: String, $serviceId: String) {
+const PROJECT_QUERY = `query ProbeProject($id: String!) {
+  project(id: $id) {
+    id
+    name
+    environments { edges { node { id name } } }
+    services { edges { node { id name } } }
+  }
+}`;
+
+const VARIABLES_QUERY = `query ProbeVariables($projectId: String!, $environmentId: String!, $serviceId: String!) {
   variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
 }`;
 
-const DEPLOYMENTS_QUERY = `query ProbeDeployments($projectId: String!, $environmentId: String, $serviceId: String) {
+const DEPLOYMENTS_QUERY = `query ProbeDeployments($projectId: String!, $environmentId: String!, $serviceId: String!) {
   deployments(first: 20, input: { projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId }) {
     edges { node { id status createdAt meta } }
   }
@@ -209,12 +218,45 @@ const DEPLOYMENTS_QUERY = `query ProbeDeployments($projectId: String!, $environm
 // Best-effort read: each part fails independently so one unsupported field
 // cannot blind the other probes.
 export async function fetchRailwaySnapshot(token, target) {
-  const variables = {
-    projectId: target.project_id,
-    environmentId: target.environment_id ?? null,
-    serviceId: target.service_id ?? null,
-  };
   const errors = [];
+  let environmentId = target.environment_id || null;
+  let serviceId = target.service_id || null;
+  let discovered = null;
+
+  // A project-level asset resolves its own production environment and service.
+  if (!environmentId || !serviceId) {
+    const discovery = await railwayQuery(token, PROJECT_QUERY, { id: target.project_id });
+    if (discovery.status >= 400) errors.push(`project HTTP ${discovery.status}`);
+    if (discovery.body?.errors?.length) errors.push(`project: ${discovery.body.errors[0].message}`);
+    const environments = (discovery.body?.data?.project?.environments?.edges ?? [])
+      .map((edge) => edge?.node)
+      .filter(Boolean);
+    const services = (discovery.body?.data?.project?.services?.edges ?? [])
+      .map((edge) => edge?.node)
+      .filter(Boolean);
+    const preferredEnvironment = environments.find((env) => /prod/i.test(env?.name ?? '')) ?? environments[0] ?? null;
+    if (!environmentId) environmentId = preferredEnvironment?.id ?? null;
+    if (!serviceId) serviceId = services[0]?.id ?? null;
+    discovered = {
+      environment: preferredEnvironment?.name ?? null,
+      service: services[0]?.name ?? null,
+      environments_found: environments.length,
+      services_found: services.length,
+    };
+  }
+
+  if (!environmentId || !serviceId) {
+    return {
+      variables: null,
+      deployments: null,
+      errors: [...errors, 'environment and service could not be resolved for this project'],
+      discovered,
+      environment_id: null,
+      service_id: null,
+    };
+  }
+
+  const variables = { projectId: target.project_id, environmentId, serviceId };
   const [envResult, deployResult] = await Promise.allSettled([
     railwayQuery(token, VARIABLES_QUERY, variables),
     railwayQuery(token, DEPLOYMENTS_QUERY, variables),
@@ -240,5 +282,5 @@ export async function fetchRailwaySnapshot(token, target) {
     errors.push(`deployments: ${deployResult.reason?.message ?? 'request failed'}`);
   }
 
-  return { variables: envMap, deployments, errors };
+  return { variables: envMap, deployments, errors, discovered, environment_id: environmentId, service_id: serviceId };
 }

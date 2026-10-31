@@ -67,7 +67,13 @@ export async function runRailwayProbes(base44, target, options = {}) {
     probeRailwayBackups(target.settings ?? null, label),
     probeRailwayEnvLeakage(snapshot.variables, label),
     probeRailwayDeploymentTraceability(snapshot.deployments, label),
-  ];
+  ].map((result) => (snapshot.errors?.length
+    ? {
+        ...result,
+        reason: `${result.reason} · ${snapshot.errors[0]}`,
+        evidence: { ...result.evidence, connection_errors: snapshot.errors },
+      }
+    : result));
 
   const persisted = await persistResults(base44, results, {
     mode,
