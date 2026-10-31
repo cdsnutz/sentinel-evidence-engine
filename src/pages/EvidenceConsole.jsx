@@ -11,6 +11,7 @@ export default function EvidenceConsole() {
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [live, setLive] = useState(false);
 
   const loadRows = useCallback(async () => {
     const page = await base44.entities.ControlMap.list({ sort: 'control_id', limit: 200 });
@@ -20,6 +21,23 @@ export default function EvidenceConsole() {
   useEffect(() => {
     loadRows().catch((e) => setError(e?.message ?? 'control_map read failed'));
   }, [loadRows]);
+
+  // Control status streams in as probes write evidence — no refresh needed.
+  useEffect(() => {
+    const unsubscribe = base44.entities.ControlMap.subscribe((event) => {
+      const record = event?.data;
+      if (!record?.id) return;
+      setLive(true);
+      setRows((prev) => {
+        const others = prev.filter((row) => row.id !== record.id);
+        if (event.type === 'delete') return others;
+        return [...others, record].sort((a, b) =>
+          String(a.control_id).localeCompare(String(b.control_id)),
+        );
+      });
+    });
+    return unsubscribe;
+  }, []);
 
   const counts = useMemo(() => {
     const pass = rows.filter((r) => r.status === 'PASS').length;
@@ -96,7 +114,7 @@ export default function EvidenceConsole() {
         )}
 
         <VerificationReport report={report} />
-        <ControlMapTable rows={rows} />
+        <ControlMapTable rows={rows} live={live} />
         <ProbeInventory />
       </div>
     </div>

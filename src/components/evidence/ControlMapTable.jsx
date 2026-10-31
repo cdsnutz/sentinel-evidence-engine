@@ -7,11 +7,25 @@ function formatTime(value) {
   return date.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
 }
 
-export default function ControlMapTable({ rows }) {
+export default function ControlMapTable({ rows, live = false }) {
   return (
     <section className="mt-10">
-      <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-[11px] tracking-[0.24em] text-zinc-500">CONTROL_MAP</h2>
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-[11px] tracking-[0.24em] text-zinc-500">
+          CONTROL_MAP
+          <span
+            className={`inline-flex items-center gap-1 text-[9px] tracking-[0.18em] ${
+              live ? 'text-emerald-400' : 'text-zinc-700'
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                live ? 'animate-pulse bg-emerald-400' : 'bg-zinc-700'
+              }`}
+            />
+            LIVE
+          </span>
+        </h2>
         <span className="text-[11px] text-zinc-600">{rows.length} rows</span>
       </header>
 
