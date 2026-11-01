@@ -1,21 +1,22 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.54';
-import { probeGitHubBranchProtection, probeGitHubRequiredSignatures, probeGitHubAdminAccessReview } from '../../shared/probes/github.ts';
+import { evaluateBranchProtection } from '../../shared/probes/github.ts';
 import { probeRailwayBackups, probeRailwayEnvLeakage, probeRailwayDeploymentTraceability } from '../../shared/probes/railway.ts';
-import { loadSecurityTags, readRows, loadRailwayTargets, loadGithubTargets, runRailwayProbes, runGithubProbes } from '../../shared/engine.ts';
+import { readRows, loadRailwayTargets, loadGithubTargets, runRailwayProbes, runGithubProbes } from '../../shared/engine.ts';
 import { resolveToken } from '../../shared/vault.ts';
 import { persistResults } from '../../shared/evidence.ts';
 
-// Public repositories with a protected default branch. The probe reads the real
-// GitHub API; whichever candidate answers first proves the PASS path.
-const PROTECTED_CANDIDATES = [
-  { owner: 'facebook', repo: 'react', branch: 'main' },
-  { owner: 'vercel', repo: 'next.js', branch: 'canary' },
-  { owner: 'nodejs', repo: 'node', branch: 'main' },
-  { owner: 'microsoft', repo: 'vscode', branch: 'main' },
-  { owner: 'kubernetes', repo: 'kubernetes', branch: 'master' },
-];
+// The PASS and FAIL paths are proven against in-memory provider payloads, never
+// against a repository the owner does not own. These targets are not assets and
+// are never allowed to become ControlMap rows.
+const PROTECTED_BRANCH_FIXTURE = {
+  target: 'fixture/protected-branch',
+  payload: { name: 'main', protected: true, commit: { sha: 'fixture-sha-protected' } },
+};
 
-const UNPROTECTED_CANDIDATE = { owner: 'octocat', repo: 'Hello-World', branch: 'master' };
+const UNPROTECTED_BRANCH_FIXTURE = {
+  target: 'fixture/unprotected-branch',
+  payload: { name: 'main', protected: false, commit: { sha: 'fixture-sha-unprotected' } },
+};
 
 export default async function (req) {
   try {
@@ -27,50 +28,19 @@ export default async function (req) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    const generatedAt = new Date().toISOString();
     const notes = [];
 
-    // ---------- 1. SUCCESS LOG (live GitHub read) ----------
-    const gh = resolveToken('github', null);
-    const attempts = [];
-    let provenSuccess = null;
-
-    for (const candidate of PROTECTED_CANDIDATES) {
-      const result = await probeGitHubBranchProtection(gh.token, candidate.owner, candidate.repo, candidate.branch);
-      attempts.push({ target: result.target, status: result.status, reason: result.reason, http_status: result.http_status });
-      if (result.status === 'PASS') {
-        provenSuccess = result;
-        break;
-      }
-    }
-
-    let githubSecondary = [];
-    if (provenSuccess) {
-      const securityTags = await loadSecurityTags(base44);
-      const [owner, rest] = provenSuccess.target.split('/');
-      const repo = (rest || '').split('@')[0];
-      const branch = (provenSuccess.target.split('@')[1] || 'main');
-      const secondary = await Promise.all([
-        probeGitHubRequiredSignatures(gh.token, owner, repo, branch),
-        probeGitHubAdminAccessReview(gh.token, owner, repo, securityTags),
-      ]);
-      githubSecondary = secondary.map((r) => ({ probe_id: r.probe_id, status: r.status, reason: r.reason }));
-      await persistResults(base44, [provenSuccess, ...secondary], {
-        mode: 'live',
-        token_source: gh.source,
-        duration_ms: 0,
-      });
-    }
-
-    if (gh.source === 'none') {
-      notes.push('No GITHUB_TOKEN secret set: live GitHub reads are unauthenticated (branch protection is public; commit signing and collaborator review need a token).');
-    }
-
-    // ---------- 2. FAILURE LOG (live FAIL + pure-function FAILs) ----------
-    const unprotected = await probeGitHubBranchProtection(
-      gh.token,
-      UNPROTECTED_CANDIDATE.owner,
-      UNPROTECTED_CANDIDATE.repo,
-      UNPROTECTED_CANDIDATE.branch,
+    // ---------- PURE FIXTURES (no network, no control state) ----------
+    const protectedFixture = evaluateBranchProtection(
+      PROTECTED_BRANCH_FIXTURE.payload,
+      PROTECTED_BRANCH_FIXTURE.target,
+      { branch: 'main' },
+    );
+    const unprotectedFixture = evaluateBranchProtection(
+      UNPROTECTED_BRANCH_FIXTURE.payload,
+      UNPROTECTED_BRANCH_FIXTURE.target,
+      { branch: 'main' },
     );
 
     const railwayFixture = [
@@ -82,46 +52,99 @@ export default async function (req) {
       ),
     ];
 
-    await persistResults(base44, [unprotected], { mode: 'live', token_source: gh.source, duration_ms: 0 });
-    await persistResults(base44, railwayFixture, { mode: 'fixture', token_source: 'none', duration_ms: 0 });
-
-    const rw = resolveToken('railway', null);
-    if (rw.source === 'none') {
-      notes.push('No RAILWAY_TOKEN secret set: the Railway probes were proven against a fixture payload, not a live Railway workspace. Add the token and a MonitoredAsset to turn those rows live.');
-    }
-
-    const failureChecks = [
-      {
-        probe_id: 'github_branch_protection',
-        mode: 'live',
-        target: unprotected.target,
-        expected: 'FAIL',
-        status: unprotected.status,
-        reason: unprotected.reason,
-      },
-      ...railwayFixture.map((result) => ({
-        probe_id: result.probe_id,
-        mode: 'fixture',
-        target: result.target,
-        expected: 'FAIL',
-        status: result.status,
-        reason: result.reason,
-      })),
-    ];
+    const successProven = protectedFixture.status === 'PASS';
+    const failureChecks = [unprotectedFixture, ...railwayFixture].map((result) => ({
+      probe_id: result.probe_id,
+      source: 'fixture',
+      mode: 'fixture',
+      target: result.target,
+      expected: 'FAIL',
+      status: result.status,
+      reason: result.reason,
+    }));
     const failureProven = failureChecks.every((check) => check.status === 'FAIL');
 
-    // ---------- CONFIGURED MONITORED ASSETS (real targets) ----------
-    const configuredAssets = [];
+    // ---------- CONFIGURED MONITORED ASSETS (the only real targets) ----------
+    const githubTargets = await loadGithubTargets(base44);
     const railwayTargets = await loadRailwayTargets(base44);
+    const configuredCount = githubTargets.length + railwayTargets.length;
+
+    // Every target the truth table is allowed to carry.
+    const assetKeys = new Set();
+    for (const target of githubTargets) {
+      assetKeys.add(`${target.owner}/${target.repo}@${target.branch || 'main'}`);
+      assetKeys.add(`${target.owner}/${target.repo}`);
+    }
+    for (const target of railwayTargets) {
+      assetKeys.add(target.label || target.project_id);
+    }
+
+    if (configuredCount === 0) {
+      return Response.json({
+        generated_at: generatedAt,
+        verification_complete: false,
+        target_source: 'none',
+        reason: 'no monitored asset configured',
+        artifacts: {
+          success_log: {
+            proven: false,
+            source: 'none',
+            mode: 'none',
+            reason: 'no monitored asset configured',
+          },
+          failure_log: {
+            proven: false,
+            source: 'none',
+            mode: 'none',
+            reason: 'no monitored asset configured',
+            checks: [],
+          },
+          database_state: {
+            proven: false,
+            rows: 0,
+            controls_mapped: [],
+            control_map: [],
+          },
+          evaluated_assets: [],
+        },
+        logic_suite: [],
+        notes: [
+          'No active MonitoredAsset rows: nothing was probed and no ProbeRun or ControlMap rows were written.',
+        ],
+      });
+    }
+
+    // ---------- LIVE EVALUATION OF THE CONFIGURED ASSETS ----------
+    const evaluatedAssets = [];
+
+    for (const target of githubTargets) {
+      const run = await runGithubProbes(base44, target, { mode: 'live' });
+      evaluatedAssets.push({
+        provider: 'github',
+        target: run.target,
+        token_source: run.token_source,
+        connection_errors: run.results
+          .filter((result) => result.http_status === 401)
+          .map(() => 'GitHub returned HTTP 401'),
+        results: run.results.map((result) => ({
+          probe_id: result.probe_id,
+          target: result.target,
+          status: result.status,
+          reason: result.reason,
+        })),
+      });
+    }
+
     for (const target of railwayTargets) {
       const run = await runRailwayProbes(base44, target, { mode: 'live' });
-      configuredAssets.push({
+      evaluatedAssets.push({
         provider: 'railway',
         target: run.target,
         token_source: run.token_source,
         connection_errors: run.errors,
         results: run.results.map((result) => ({
           probe_id: result.probe_id,
+          target: result.target,
           status: result.status,
           reason: result.reason,
         })),
@@ -130,23 +153,27 @@ export default async function (req) {
         notes.push(`Railway credential rejected for ${run.target}: ${run.errors[0]}`);
       }
     }
-    const githubTargets = await loadGithubTargets(base44);
-    for (const target of githubTargets) {
-      const run = await runGithubProbes(base44, target, { mode: 'live' });
-      configuredAssets.push({
-        provider: 'github',
-        target: run.target,
-        token_source: run.token_source,
-        connection_errors: [],
-        results: run.results.map((result) => ({
-          probe_id: result.probe_id,
-          status: result.status,
-          reason: result.reason,
-        })),
-      });
+
+    const evaluatedCount = evaluatedAssets.filter((asset) => asset.results.length > 0).length;
+
+    const gh = resolveToken('github', null);
+    if (gh.source === 'none') {
+      notes.push('No GITHUB_TOKEN secret set: GitHub reads are unauthenticated, so commit signing and collaborator review fail closed.');
+    }
+    const rw = resolveToken('railway', null);
+    if (rw.source === 'none') {
+      notes.push('No RAILWAY_TOKEN secret set: Railway assets cannot be read and their controls fail closed.');
     }
 
-    // ---------- 3. DATABASE STATE ----------
+    // Fixture rows are recorded as history only, never as control status.
+    await persistResults(base44, [protectedFixture, unprotectedFixture, ...railwayFixture], {
+      mode: 'fixture',
+      token_source: 'none',
+      duration_ms: 0,
+      update_control_map: false,
+    });
+
+    // ---------- DATABASE STATE (only rows backed by a configured asset) ----------
     const controlRows = readRows(
       await base44.asServiceRole.entities.ControlMap.list({ sort: 'control_id', limit: 200 }),
     );
@@ -159,8 +186,18 @@ export default async function (req) {
       evidence_mode: row.evidence_mode,
       last_run_at: row.last_run_at,
     }));
-    const mappedControls = new Set(dump.filter((row) => String(row.control_id).startsWith('SOC2-')).map((row) => row.control_id));
-    const databaseProven = dump.length >= 6 && mappedControls.size >= 5;
+    const backed = dump.filter((row) => assetKeys.has(row.target));
+    const unbacked = dump.filter((row) => !assetKeys.has(row.target));
+    const mappedControls = new Set(backed.map((row) => row.control_id));
+    const assetsRepresented = evaluatedAssets.filter((asset) =>
+      asset.results.some((result) => backed.some((row) => row.target === result.target)),
+    ).length;
+    const databaseProven =
+      backed.length > 0 && assetsRepresented === evaluatedCount && unbacked.length === 0;
+
+    if (unbacked.length > 0) {
+      notes.push(`${unbacked.length} ControlMap row(s) reference targets that are not configured assets and are excluded from the truth table.`);
+    }
 
     // ---------- LOGIC SUITE (pure functions, no network) ----------
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -168,6 +205,8 @@ export default async function (req) {
     const check = (label, result, expected) => {
       logicSuite.push({ case: label, expected, actual: result.status, matched: result.status === expected });
     };
+    check('protected branch fixture -> PASS', protectedFixture, 'PASS');
+    check('unprotected branch fixture -> FAIL', unprotectedFixture, 'FAIL');
     check(
       'backups · disabled -> FAIL',
       probeRailwayBackups({ backups: { disabled: true } }, 'logic'),
@@ -204,37 +243,48 @@ export default async function (req) {
       'PASS',
     );
 
+    const verificationComplete =
+      evaluatedCount > 0 && successProven && failureProven && databaseProven;
+
     return Response.json({
-      generated_at: new Date().toISOString(),
-      verification_complete: Boolean(provenSuccess) && failureProven && databaseProven,
+      generated_at: generatedAt,
+      verification_complete: verificationComplete,
+      target_source: evaluatedCount > 0 ? 'asset' : 'fixture',
       artifacts: {
         success_log: {
-          proven: Boolean(provenSuccess),
-          mode: 'live',
-          token_source: gh.source,
-          probe_id: provenSuccess?.probe_id ?? null,
-          control_id: provenSuccess?.control_id ?? null,
-          target: provenSuccess?.target ?? null,
-          reason: provenSuccess?.reason ?? null,
-          evidence: provenSuccess?.evidence ?? null,
-          attempts,
-          secondary_probes: githubSecondary,
+          proven: successProven,
+          source: 'fixture',
+          mode: 'fixture',
+          probe_id: protectedFixture.probe_id,
+          control_id: protectedFixture.control_id,
+          target: protectedFixture.target,
+          status: protectedFixture.status,
+          reason: protectedFixture.reason,
+          evidence: protectedFixture.evidence,
         },
         failure_log: {
           proven: failureProven,
-          mode: 'mixed',
+          source: 'fixture',
+          mode: 'fixture',
           checks: failureChecks,
         },
         database_state: {
           proven: databaseProven,
-          rows: dump.length,
+          rows: backed.length,
+          assets_represented: assetsRepresented,
           controls_mapped: Array.from(mappedControls).sort(),
-          control_map: dump,
+          control_map: backed,
+          unbacked_rows: unbacked.map((row) => ({
+            control_id: row.control_id,
+            probe_id: row.probe_id,
+            target: row.target,
+            status: row.status,
+          })),
         },
+        evaluated_assets: evaluatedAssets,
       },
       logic_suite: logicSuite,
       notes,
-      configured_assets: configuredAssets,
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

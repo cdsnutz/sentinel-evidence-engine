@@ -27,6 +27,25 @@ async function ghGet(token, path) {
   return { status: response.status, ok: response.ok, body };
 }
 
+// Pure decision: a branch payload in, a control result out. No network, so the
+// same function proves the PASS/FAIL paths against fixtures.
+export function evaluateBranchProtection(payload, target, options = {}) {
+  const isProtected = payload?.protected === true;
+  return buildResult(
+    'github_branch_protection',
+    target,
+    isProtected ? 'PASS' : 'FAIL',
+    isProtected ? 'branch reports protected=true' : 'branch reports protected=false',
+    {
+      branch: payload?.name ?? options.branch ?? null,
+      protected: payload?.protected ?? false,
+      head_sha: payload?.commit?.sha ?? null,
+      auth_fallback: Boolean(options.authFallback),
+    },
+    typeof options.httpStatus === 'number' ? options.httpStatus : null,
+  );
+}
+
 // GET /repos/{owner}/{repo}/branches/{branch} -> protected: false means FAIL.
 export async function probeGitHubBranchProtection(token, owner, repo, branch = 'main') {
   const target = `${owner}/${repo}@${branch}`;
@@ -46,20 +65,11 @@ export async function probeGitHubBranchProtection(token, owner, repo, branch = '
         res.status,
       );
     }
-    const isProtected = res.body?.protected === true;
-    return buildResult(
-      'github_branch_protection',
-      target,
-      isProtected ? 'PASS' : 'FAIL',
-      isProtected ? 'branch reports protected=true' : 'branch reports protected=false',
-      {
-        branch: res.body?.name ?? branch,
-        protected: res.body?.protected ?? false,
-        head_sha: res.body?.commit?.sha ?? null,
-        auth_fallback: authFallback,
-      },
-      res.status,
-    );
+    return evaluateBranchProtection(res.body, target, {
+      branch,
+      authFallback,
+      httpStatus: res.status,
+    });
   } catch (error) {
     return buildResult(
       'github_branch_protection',

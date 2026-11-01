@@ -22,6 +22,18 @@ async function applyResult(base44, result, meta) {
     ran_at: ranAt,
   });
 
+  // Fixtures record history only: they must never overwrite a live control's status.
+  if (meta.update_control_map === false) {
+    return {
+      probe_id: result.probe_id,
+      control_id: result.control_id,
+      target: result.target,
+      status: result.status,
+      mode: meta.mode,
+      persisted: 'probe_run_only',
+    };
+  }
+
   const controlPatch = {
     control_id: result.control_id,
     probe_id: result.probe_id,
