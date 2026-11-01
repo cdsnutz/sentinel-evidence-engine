@@ -1,0 +1,76 @@
+{
+  "auth": "oauth",
+  "tools": {
+    "functions": [
+      {
+        "name": "run_evidence_engine",
+        "title": "Run evidence engine",
+        "description": "Runs the read-only GitHub and Railway probes against every active MonitoredAsset and writes fresh evidence to ProbeRun and ControlMap. Call when the user asks to refresh, re-run, or collect compliance evidence now. Omit targets to probe all configured assets.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "providers": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["github", "railway"] },
+              "description": "Providers to probe. Defaults to both github and railway."
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["live", "fixture"],
+              "description": "live reads the provider APIs; fixture replays local payloads. Defaults to live."
+            },
+            "targets": {
+              "type": "object",
+              "description": "Optional explicit targets to probe instead of the configured MonitoredAsset rows.",
+              "properties": {
+                "github": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "owner": { "type": "string" },
+                      "repo": { "type": "string" },
+                      "branch": { "type": "string", "description": "Defaults to main." }
+                    },
+                    "required": ["owner", "repo"]
+                  }
+                },
+                "railway": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": { "type": "string" },
+                      "project_id": { "type": "string" },
+                      "environment_id": { "type": "string" },
+                      "service_id": { "type": "string" }
+                    },
+                    "required": ["project_id"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "handler": "runEvidenceEngine",
+        "annotations": {
+          "read_only_hint": false,
+          "destructive_hint": false,
+          "idempotent_hint": false
+        }
+      },
+      {
+        "name": "verify_evidence_engine",
+        "title": "Verify evidence engine",
+        "description": "Self-verifies the engine: proves the PASS and FAIL paths against fixtures, evaluates the configured assets live, and returns the resulting control truth table plus its logic suite. Call when the user asks whether the engine itself is working or wants a verification report. Takes no arguments.",
+        "input_schema": { "type": "object", "properties": {} },
+        "handler": "verifyEvidenceEngine",
+        "annotations": {
+          "read_only_hint": false,
+          "destructive_hint": false,
+          "idempotent_hint": false
+        }
+      }
+    ]
+  }
+}
