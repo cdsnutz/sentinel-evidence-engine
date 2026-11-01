@@ -5,6 +5,7 @@ import StatusChip from '@/components/evidence/StatusChip';
 import ControlMapTable from '@/components/evidence/ControlMapTable';
 import VerificationReport from '@/components/evidence/VerificationReport';
 import ProbeInventory from '@/components/evidence/ProbeInventory';
+import ExportControlMap from '@/components/evidence/ExportControlMap';
 
 export default function EvidenceConsole() {
   const [rows, setRows] = useState([]);
@@ -78,15 +79,18 @@ export default function EvidenceConsole() {
               read-only probes · github + railway · SOC2 control mapping
             </p>
           </div>
-          <button
-            type="button"
-            onClick={runHarness}
-            disabled={busy}
-            className="inline-flex items-center gap-2 border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-[11px] tracking-[0.16em] text-emerald-300 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            {busy ? 'RUNNING' : 'RUN VERIFICATION'}
-          </button>
+          <div className="flex items-center gap-2">
+            <ExportControlMap rows={rows} />
+            <button
+              type="button"
+              onClick={runHarness}
+              disabled={busy}
+              className="inline-flex items-center gap-2 border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-[11px] tracking-[0.16em] text-emerald-300 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              {busy ? 'RUNNING' : 'RUN VERIFICATION'}
+            </button>
+          </div>
         </header>
 
         <dl className="mt-6 grid grid-cols-2 gap-px border border-zinc-800 bg-zinc-800 sm:grid-cols-4">
