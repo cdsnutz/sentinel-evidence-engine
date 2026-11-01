@@ -64,7 +64,7 @@ export async function runRailwayProbes(base44, target, options = {}) {
     : { variables: null, deployments: null, errors: ['RAILWAY_TOKEN is not set'] };
 
   const results = [
-    probeRailwayBackups(target.settings ?? null, label),
+    probeRailwayBackups(snapshot.backups ?? null, label, { service_id: target.service_id ?? null }),
     probeRailwayEnvLeakage(snapshot.variables, label),
     probeRailwayDeploymentTraceability(snapshot.deployments, label),
   ].map((result) => (snapshot.errors?.length

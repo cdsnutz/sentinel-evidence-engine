@@ -43,8 +43,23 @@ export default async function (req) {
       { branch: 'main' },
     );
 
+    // A volume instance whose schedules exist but which holds no backup at all.
+    const backupVolumeSnapshot = (schedules, backups) => ({
+      volumes: [
+        {
+          volume_instance_id: 'fixture-volume-instance',
+          service_id: 'fixture-service',
+          mount_path: '/var/lib/postgresql/data',
+          schedules,
+          backups,
+        },
+      ],
+      compliance_signal: [],
+      selection: { service_id: 'fixture-service', mode: 'service' },
+    });
+
     const railwayFixture = [
-      probeRailwayBackups({ backups: { disabled: true } }, 'fixture/railway-service'),
+      probeRailwayBackups(backupVolumeSnapshot([], []), 'fixture/railway-service'),
       probeRailwayEnvLeakage({ DATABASE_PASSWORD: '1234', NODE_ENV: 'production' }, 'fixture/railway-service'),
       probeRailwayDeploymentTraceability(
         [{ id: 'dep_manual_1', status: 'SUCCESS', meta: { source: 'manual' } }],
@@ -208,18 +223,52 @@ export default async function (req) {
     check('protected branch fixture -> PASS', protectedFixture, 'PASS');
     check('unprotected branch fixture -> FAIL', unprotectedFixture, 'FAIL');
     check(
-      'backups · disabled -> FAIL',
-      probeRailwayBackups({ backups: { disabled: true } }, 'logic'),
+      'backups · no schedule -> FAIL',
+      probeRailwayBackups(backupVolumeSnapshot([], []), 'logic'),
       'FAIL',
     );
     check(
-      'backups · 30 days stale -> FAIL',
-      probeRailwayBackups({ backups: { enabled: true, lastBackupAt: thirtyDaysAgo } }, 'logic'),
+      'backups · no backup inside the daily window -> FAIL',
+      probeRailwayBackups(
+        backupVolumeSnapshot(
+          [{ name: 'Daily', kind: 'DAILY', cron: '5 0 * * *' }],
+          [{ name: 'stale-backup', createdAt: thirtyDaysAgo }],
+        ),
+        'logic',
+      ),
       'FAIL',
     );
     check(
-      'backups · fresh -> PASS',
-      probeRailwayBackups({ backups: { enabled: true, lastBackupAt: new Date().toISOString() } }, 'logic'),
+      'backups · fresh daily backup -> PASS',
+      probeRailwayBackups(
+        backupVolumeSnapshot(
+          [{ name: 'Daily', kind: 'DAILY', cron: '5 0 * * *' }],
+          [{ name: 'fresh-backup', createdAt: new Date().toISOString() }],
+        ),
+        'logic',
+      ),
+      'PASS',
+    );
+    check(
+      'backups · weekly-only, 3 days old -> PASS',
+      probeRailwayBackups(
+        backupVolumeSnapshot(
+          [{ name: 'Weekly', kind: 'WEEKLY', cron: '33 10 * * 6' }],
+          [{ name: 'weekly-backup', createdAt: new Date(Date.now() - 3 * 86400000).toISOString() }],
+        ),
+        'logic',
+      ),
+      'PASS',
+    );
+    check(
+      'backups · monthly-only, 20 days old -> PASS',
+      probeRailwayBackups(
+        backupVolumeSnapshot(
+          [{ name: 'Monthly', kind: 'MONTHLY', cron: '58 10 1 * *' }],
+          [{ name: 'monthly-backup', createdAt: new Date(Date.now() - 20 * 86400000).toISOString() }],
+        ),
+        'logic',
+      ),
       'PASS',
     );
     check(
